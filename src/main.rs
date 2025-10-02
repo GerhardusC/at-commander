@@ -35,7 +35,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
-                Err(e) => eprintln!("{:?}", e),
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    break;
+                },
             }
         }
     });
