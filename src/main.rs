@@ -1,12 +1,26 @@
 use std::{
-    error::Error,
-    io::stdin,
-    thread::{self},
-    time::Duration,
+    error::Error, io::stdin, thread::{self}, time::Duration
 };
 
+use clap::{command, Parser};
+
+/// Simple program to communicate AT commands with the ESP-01 module.
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Port
+    #[arg(short, long, default_value_t = String::from("/dev/ttyUSB0"))]
+    port: String,
+
+    /// Baud rate
+    #[arg(short, long, default_value_t = 115_200)]
+    baud_rate: u32,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut port = serialport::new("/dev/ttyUSB0", 115_200)
+    let args = Args::parse();
+
+    let mut port = serialport::new(&args.port, args.baud_rate)
         .timeout(Duration::from_millis(100))
         .open()?;
 
