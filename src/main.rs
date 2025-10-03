@@ -15,12 +15,19 @@ struct Args {
     /// Baud rate
     #[arg(short, long, default_value_t = 115_200)]
     baud_rate: u32,
+
+    /// By ending an input string with the "~" character, you may specify to send a buffer
+    /// instead of an ASCII string. This argument determines the base in which your buffer will
+    /// be interpreted. By default it is 16, i.e. your buffers need to be HEX values split by
+    /// spaces. E.G. "0F F0 30 40 5C~" etc. 
+    #[arg(short, long, default_value_t = 16)]
+    radix_input_buffer: u8,
 }
 
-fn parse_hex_bytes(input: &str) -> Result<Vec<u8>, String> {
+fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
     input
         .split_whitespace()
-        .map(|token| u8::from_str_radix(token, 16)
+        .map(|token| u8::from_str_radix(token, radix.into())
         .map_err(|_| format!("Invalid hex: {}", token)))
         .collect()
 }
@@ -59,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let payload = if trimmed_input.ends_with("~") {
             trimmed_input.pop();
-            let bytes_vec = parse_hex_bytes(&trimmed_input)?;
+            let bytes_vec = parse_bytes(&trimmed_input, args.radix_input_buffer)?;
             println!("SENDING:{:?}", bytes_vec);
             sleep(Duration::from_millis(10));
             bytes_vec
