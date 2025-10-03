@@ -64,18 +64,69 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let mut trimmed_input = input.trim().to_owned();
 
+        // Send raw bytes if string ends with ~
         let payload = if trimmed_input.ends_with("~") {
             trimmed_input.pop();
             let bytes_vec = parse_bytes(&trimmed_input, args.radix_input_buffer)?;
-            println!("SENDING:{:?}", bytes_vec);
-            sleep(Duration::from_millis(10));
             bytes_vec
+        // Send MQTT message
+        } else if trimmed_input.starts_with("con") {
+            // Client name always client 1.
+            // Byte #	Value	Field	Description
+            // 1	10	Fixed header	CONNECT packet, flags=0
+            // 2	13	Remaining Length	19 bytes
+            // 3-4	00 04	Protocol Name Length	4 bytes
+            // 5-8	4D 51 54 54	Protocol Name	"MQTT"
+            // 9	04	Protocol Level	MQTT 3.1.1
+            // 10	02	Connect Flags	CleanSession=1
+            // 11-12	00 3C	Keep Alive	60 seconds
+            // 13-14	00 07	Client ID length	7 bytes
+            // 15-21	63 6C 69 65 6E 74 31	Client ID	"client1"
+            let msg = "\x10\x13\x00\x04MQTT\x04\x02\x00\x3C\x00\x07client1".as_bytes().to_vec();
+            msg
+        } else if trimmed_input.starts_with("msg") {
+            // Byte #	Value	Field	Description
+            // 1	30	Fixed header	PUBLISH packet, QoS=0, DUP=0, Retain=0
+            // 2	12	Remaining Length	18 bytes (variable header + payload)
+            // 3-4	00 0B	Topic Name Length	11 bytes
+            // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"	
+            // 16-20	68 65 6C 6C 6F	Payload = "hello"
+
+            let args: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
+
+            let topic = match args.get(1) {
+                Some(x) => x.to_owned(),
+                None => "/home".to_owned(),
+            };
+
+            let message = match args.get(2) {
+                Some(x) => x.to_owned(),
+                None => "HEY".to_owned(),
+            };
+
+            let topic_len = topic.len();
+            let topic_and_message_len = topic_len + message.len();
+
+            let mut buff: Vec<u8> = vec![
+                0x30,
+                topic_and_message_len.try_into().unwrap_or(0xFF),
+                if topic_len > 0xFF { (topic_len - 0xFF).try_into().unwrap_or(255) } else { 0x00 },
+                topic_len.try_into().unwrap_or(0xFF),
+            ];
+
+            let mut topic_msg_u8 = (topic + &message).into_bytes();
+
+            buff.append(&mut topic_msg_u8);
+            buff
         } else {
-            (trimmed_input.to_owned() + "\r\n").as_bytes().to_owned()
+            (trimmed_input.to_owned() + "\r\n").as_bytes().to_vec()
         };
+
+        println!("Sending {} bytes", payload.len());
 
         let res = port.write(payload.as_slice());
         port.flush()?;
+
         match res {
             Ok(x) => {
                 println!("Bytes written: {x}");
