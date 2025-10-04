@@ -1,5 +1,5 @@
 use std::{
-    error::Error, io::stdin, thread::{self, sleep}, time::Duration
+    error::Error, io::stdin, thread::{self}, time::Duration
 };
 
 use clap::{command, Parser};
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         let mut input = String::new();
-        let _bytes_read = stdin().read_line(&mut input)?;
+        let _bytes_read_to_input = stdin().read_line(&mut input)?;
 
         let mut trimmed_input = input.trim().to_owned();
 
@@ -85,13 +85,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let msg = "\x10\x13\x00\x04MQTT\x04\x02\x00\x3C\x00\x07client1".as_bytes().to_vec();
             msg
         } else if trimmed_input.starts_with("msg") {
-            // Byte #	Value	Field	Description
-            // 1	30	Fixed header	PUBLISH packet, QoS=0, DUP=0, Retain=0
-            // 2	12	Remaining Length	18 bytes (variable header + payload)
-            // 3-4	00 0B	Topic Name Length	11 bytes
-            // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"	
-            // 16-20	68 65 6C 6C 6F	Payload = "hello"
-
             let args: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
             let topic = match args.get(1) {
@@ -107,6 +100,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let topic_len = topic.len();
             let topic_and_message_len = topic_len + message.len();
 
+            // Byte #	Value	Field	Description
+            // 1	30	Fixed header	PUBLISH packet, QoS=0, DUP=0, Retain=0
+            // 2	12	Remaining Length	18 bytes (variable header + payload)
+            // 3-4	00 0B	Topic Name Length	11 bytes
+            // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"	
+            // 16-20	68 65 6C 6C 6F	Payload = "hello"
             let mut buff: Vec<u8> = vec![
                 0x30,
                 topic_and_message_len.try_into().unwrap_or(0xFF),
