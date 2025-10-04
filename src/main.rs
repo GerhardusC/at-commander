@@ -1,5 +1,5 @@
 use std::{
-    error::Error, io::{stdin, ErrorKind}, thread::{self}, time::Duration
+    error::Error, io::{stdin, ErrorKind}, thread::{self, sleep}, time::Duration
 };
 
 use at_commander::{Event, EventLoop};
@@ -91,19 +91,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // 11-12	00 3C	Keep Alive	60 seconds
                 // 13-14	00 07	Client ID length	7 bytes
                 // 15-21	63 6C 69 65 6E 74 31	Client ID	"client1"
-                let msg = "\x10\x13\x00\x04MQTT\x04\x02\x00\x3C\x00\x07client1".as_bytes().to_vec();
+                let msg = "\x10\x13\x00\x04\x4D\x51\x54\x54\x04\x02\x00\x3C\x00\x07client1".as_bytes().to_vec();
+                port.write(format!("AT+CIPSEND={}\r\n", msg.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
+                port.flush().map_err(|_| ErrorKind::Other)?;
+                sleep(Duration::from_secs(1));
+                //                    10  13  00  04  4D  51  54  54  04  02  00  3C  00  07 63 6C 69 65 6E 74 31
                 msg
             } else if trimmed_input.starts_with("msg") {
                 let args: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
                 let topic = match args.get(1) {
                     Some(x) => x.to_owned(),
-                    None => "/home".to_owned(),
+                    None => "/test/topic".to_owned(),
                 };
 
                 let message = match args.get(2) {
                     Some(x) => x.to_owned(),
-                    None => "HEY".to_owned(),
+                    None => "hello".to_owned(),
                 };
 
                 let topic_len = topic.len();
@@ -117,14 +121,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // 16-20	68 65 6C 6C 6F	Payload = "hello"
                 let mut buff: Vec<u8> = vec![
                     0x30,
-                    topic_and_message_len.try_into().unwrap_or(0xFF),
-                    if topic_len > 0xFF { (topic_len - 0xFF).try_into().unwrap_or(255) } else { 0x00 },
-                    topic_len.try_into().unwrap_or(0xFF),
+                    topic_and_message_len.try_into().unwrap_or(0xFF) + 0x02,
+                    0x00,
+                    topic_len as u8,
                 ];
 
                 let mut topic_msg_u8 = (topic + &message).into_bytes();
 
+
                 buff.append(&mut topic_msg_u8);
+
+                println!("Sending {:?}", buff);
+
+                port.write(format!("AT+CIPSEND={}\r\n", buff.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
+                port.flush().map_err(|_| ErrorKind::Other)?;
+                sleep(Duration::from_secs(1));
+
                 buff
             } else if trimmed_input == "test" {
                 tr2_sender.send(
@@ -132,6 +144,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 "\r\n".as_bytes().to_vec()
 
+            } else if trimmed_input.starts_with("start") {
+                let device_num: Vec<String> = trimmed_input.split(":").map(|s| s.to_owned()).collect();
+                format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", device_num.get(1).unwrap_or(&"243".to_owned())).as_bytes().to_vec()
+            } else if trimmed_input == "close" {
+
+                port.write("AT+CIPSEND=2\r\n".as_bytes()).map_err(|_| ErrorKind::Other)?;
+                port.flush().map_err(|_| ErrorKind::Other)?;
+                sleep(Duration::from_secs(1));
+
+                vec![0xE0,0x00]
             } else {
                 (trimmed_input.to_owned() + "\r\n").as_bytes().to_vec()
             };
@@ -155,17 +177,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let connect_responsed_sender = event_loop.sender.clone();
-    event_loop.on("connect".to_owned(), move |e| {
-        // port_cp2.write("".as_bytes());
-        println!("CONNECT EVENT RECEIVED");
-        connect_responsed_sender.send(
-            Event::new("connected".to_owned(), "".to_owned())
-        );
+    event_loop.on("connected".to_owned(), move |e| {
+        port_cp2.write("".as_bytes());
     });
 
-    event_loop.on("connected".to_owned(), |e| {
-        println!("CONNECTED EVENT RECEIVED");
+    event_loop.on("publish".to_owned(), |e| {
     });
+
+    event_loop.on("message".to_owned(), |e| {
+    });
+
 
     event_loop.start();
 
