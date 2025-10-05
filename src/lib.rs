@@ -20,7 +20,7 @@ pub enum WifiState {
 
 pub struct Event {
     event: WifiEvent,
-    data: String,
+    pub data: String,
 }
 
 impl Event {

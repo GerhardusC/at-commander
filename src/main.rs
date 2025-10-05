@@ -42,22 +42,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         .timeout(Duration::from_millis(100))
         .open()?;
 
-    let mut port_cp1 = port.try_clone()?;
-    let mut port_cp2 = port.try_clone()?;
+    let mut port_cp = port.try_clone()?;
 
-    let input_buffer = Arc::new(Mutex::new(String::new()));
+    let read_buffer = Arc::new(Mutex::new(String::new()));
 
-    let input_buffer_to_write = input_buffer.clone();
+    let read_buffer_writer = read_buffer.clone();
 
     // READING TASK
     let tr1 = thread::spawn(move || {
         loop {
             let mut buffer: [u8; 1] = [0; 1];
-            match port_cp1.read(&mut buffer) {
+            match port_cp.read(&mut buffer) {
                 Ok(bytes) => {
                     if bytes == 1 {
                         let bufstr = String::from_utf8_lossy(&buffer);
-                        if let Ok(mut input_buffer) = input_buffer_to_write.lock() {
+                        if let Ok(mut input_buffer) = read_buffer_writer.lock() {
                             input_buffer.push_str(&bufstr);
                         }
                         print!("{}", bufstr);
@@ -72,8 +71,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
+    let mut port_cp = port.try_clone()?;
     // USER INPUT TASK
-    let tr2_sender = event_loop.sender.clone();
+    let event_sender = event_loop.sender.clone();
     let tr2 = thread::spawn(move || -> Result<(), ErrorKind> {
         loop {
             let mut input = String::new();
@@ -88,88 +88,34 @@ fn main() -> Result<(), Box<dyn Error>> {
                 bytes_vec
             // Send MQTT message
             } else if trimmed_input.starts_with("con") {
-                // Client name always client 1.
-                // Byte #	Value	Field	Description
-                // 1	10	Fixed header	CONNECT packet, flags=0
-                // 2	13	Remaining Length	19 bytes
-                // 3-4	00 04	Protocol Name Length	4 bytes
-                // 5-8	4D 51 54 54	Protocol Name	"MQTT"
-                // 9	04	Protocol Level	MQTT 3.1.1
-                // 10	02	Connect Flags	CleanSession=1
-                // 11-12	00 3C	Keep Alive	60 seconds
-                // 13-14	00 07	Client ID length	7 bytes
-                // 15-21	63 6C 69 65 6E 74 31	Client ID	"client1"
-                let msg = "\x10\x13\x00\x04\x4D\x51\x54\x54\x04\x02\x00\x3C\x00\x07client1".as_bytes().to_vec();
-                port_cp2.write(format!("AT+CIPSEND={}\r\n", msg.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
-                port_cp2.flush().map_err(|_| ErrorKind::Other)?;
-                sleep(Duration::from_secs(1));
-                //                    10  13  00  04  4D  51  54  54  04  02  00  3C  00  07 63 6C 69 65 6E 74 31
-                msg
-            } else if trimmed_input.starts_with("msg") {
-                let args: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
+                let addr: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
-                let topic = match args.get(1) {
-                    Some(x) => x.to_owned(),
-                    None => "/test/topic".to_owned(),
-                };
-
-                let message = match args.get(2) {
-                    Some(x) => x.to_owned(),
-                    None => "hello".to_owned(),
-                };
-
-                let topic_len = topic.len();
-                let topic_and_message_len = topic_len + message.len();
-
-                // Byte #	Value	Field	Description
-                // 1	30	Fixed header	PUBLISH packet, QoS=0, DUP=0, Retain=0
-                // 2	12	Remaining Length	18 bytes (variable header + payload)
-                // 3-4	00 0B	Topic Name Length	11 bytes
-                // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"	
-                // 16-20	68 65 6C 6C 6F	Payload = "hello"
-                let mut buff: Vec<u8> = vec![
-                    0x30,
-                    topic_and_message_len.try_into().unwrap_or(0xFF) + 0x02,
-                    0x00,
-                    topic_len as u8,
-                ];
-
-                let mut topic_msg_u8 = (topic + &message).into_bytes();
-
-
-                buff.append(&mut topic_msg_u8);
-
-                println!("Sending {:?}", buff);
-
-                port_cp2.write(format!("AT+CIPSEND={}\r\n", buff.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
-                port_cp2.flush().map_err(|_| ErrorKind::Other)?;
-                sleep(Duration::from_secs(1));
-
-                buff
-            } else if trimmed_input == "test" {
-                tr2_sender.send(
-                    Event::new(WifiEvent::PublishConnectRequest, "asdasd".to_owned())
+                event_sender.send(Event::new(
+                    WifiEvent::PublishConnectRequest,
+                    addr.get(1).unwrap_or(&"243".to_owned()).to_owned())
                 );
-                "\r\n".as_bytes().to_vec()
+                continue;
+
+            } else if trimmed_input.starts_with("msg") {
+                event_sender.send(Event::new(WifiEvent::Publish, trimmed_input));
+                continue;
 
             } else if trimmed_input.starts_with("start") {
-                let device_num: Vec<String> = trimmed_input.split(":").map(|s| s.to_owned()).collect();
-                format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", device_num.get(1).unwrap_or(&"243".to_owned())).as_bytes().to_vec()
+                event_sender.send(Event::new(WifiEvent::Publish, trimmed_input));
+                continue;
+
             } else if trimmed_input == "close" {
+                event_sender.send(Event::new(WifiEvent::Close, trimmed_input));
+                continue;
 
-                port_cp2.write("AT+CIPSEND=2\r\n".as_bytes()).map_err(|_| ErrorKind::Other)?;
-                port_cp2.flush().map_err(|_| ErrorKind::Other)?;
-                sleep(Duration::from_secs(1));
-
-                vec![0xE0,0x00]
             } else {
                 (trimmed_input.to_owned() + "\r\n").as_bytes().to_vec()
             };
 
             println!("Sending {} bytes", payload.len());
 
-            let res = port_cp2.write(payload.as_slice());
-            port_cp2.flush().map_err(|_| ErrorKind::Other)?;
+            let res = port_cp.write(payload.as_slice());
+            port_cp.flush().map_err(|_| ErrorKind::Other)?;
 
             match res {
                 Ok(x) => {
@@ -184,43 +130,209 @@ fn main() -> Result<(), Box<dyn Error>> {
         Ok(())
     });
 
-    // let mut port_cp3 = port.try_clone()?;
     // Register handlers / state transitions
+    let mut port_cp = port.try_clone()?;
+    let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::PublishConnectRequest, move |e, state| {
-        *state = WifiState::WaitingConnectAck;
+        // Clear port read string.
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
         // Open TCP Stream
-        // Wait ack
+        let msg = format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", e.data);
+        match port_cp.write(msg.as_bytes()) {
+            Ok(bytes_written) => {
+                *state = WifiState::WaitingConnectAck;
+                println!("Bytes written: {}", bytes_written);
+            },
+            Err(e) => {
+                println!("{e}");
+                *state = WifiState::Ready;
+            },
+        };
+        let _ = port_cp.flush();
     });
 
+    let mut port_cp = port.try_clone()?;
+    let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::ConnAck, move |e, state| {
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
+
+        // Client name always client 1.
+        // Byte #	Value	Field	Description
+        // 1	10	Fixed header	CONNECT packet, flags=0
+        // 2	13	Remaining Length	19 bytes
+        // 3-4	00 04	Protocol Name Length	4 bytes
+        // 5-8	4D 51 54 54	Protocol Name	"MQTT"
+        // 9	04	Protocol Level	MQTT 3.1.1
+        // 10	02	Connect Flags	CleanSession=1
+        // 11-12	00 3C	Keep Alive	60 seconds
+        // 13-14	00 07	Client ID length	7 bytes
+        // 15-21	63 6C 69 65 6E 74 31	Client ID	"client1"
+        let msg = "\x10\x13\x00\x04\x4D\x51\x54\x54\x04\x02\x00\x3C\x00\x07client1".as_bytes();
+
+        // Tell how many bytes will be sent, don't care about bytes written.
+        if let Err(e) = port_cp.write(format!("AT+CIPSEND={}\r\n", msg.len()).as_bytes()) {
+            println!("{e}");
+            *state = WifiState::Ready;
+            return;
+        };
+        let _ = port_cp.flush();
+        // Wait for ack from port
+        let mut timeout = 0;
+        loop {
+            if timeout > 10000 {
+                println!("Timed out on waiting ack from port.");
+                *state = WifiState::Ready;
+                return;
+            }
+            if let Ok(read_buffer) = read_buffer_cp.lock() {
+                if read_buffer.contains("OK") {
+                    // Port ready to receive connect request.
+                    break;
+                }
+            }
+
+            timeout += 1;
+            sleep(Duration::from_millis(1));
+        }
+        // Send bytes
+        if let Err(e) = port_cp.write(msg) {
+            println!("Failed to write message to wifi device");
+            *state = WifiState::Ready;
+        };
+        let _ = port_cp.flush();
+
         *state = WifiState::Connected;
-        // Tell how many bytes will be sent
-        // Wait for ack from port
-        // Send bytes
     });
 
+    let mut port_cp = port.try_clone()?;
+    let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::Publish, move |e, state| {
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
+        // Tell how many bytes will be sent
+        let args: Vec<String> = e.data.split(":").map(|x| x.to_owned()).collect();
+
+        let topic = match args.get(1) {
+            Some(x) => x.to_owned(),
+            None => "/test/topic".to_owned(),
+        };
+
+        let message = match args.get(2) {
+            Some(x) => x.to_owned(),
+            None => "hello".to_owned(),
+        };
+
+        let topic_len = topic.len();
+        let topic_and_message_len = topic_len + message.len();
+
+        // Byte #	Value	Field	Description
+        // 1	30	Fixed header	PUBLISH packet, QoS=0, DUP=0, Retain=0
+        // 2	12	Remaining Length	18 bytes (variable header + payload)
+        // 3-4	00 0B	Topic Name Length	11 bytes
+        // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"	
+        // 16-20	68 65 6C 6C 6F	Payload = "hello"
+        let mut buff: Vec<u8> = vec![
+            0x30,
+            topic_and_message_len.try_into().unwrap_or(0xFF) + 0x02,
+            0x00,
+            topic_len as u8,
+        ];
+
+        let mut topic_msg_u8 = (topic + &message).into_bytes();
+
+
+        buff.append(&mut topic_msg_u8);
+
+        println!("Sending {:?}", buff);
+
+        if let Err(e) = port_cp.write(format!("AT+CIPSEND={}\r\n", buff.len()).as_bytes()) {
+            println!("Failed to write message to wifi device");
+            *state = WifiState::Ready;
+        };
+
+        let _ = port_cp.flush();
+
+        // Wait for ack from port
+        let mut timeout = 0;
+        loop {
+            if timeout > 10000 {
+                println!("Timed out on waiting ack from port.");
+                *state = WifiState::Ready;
+                return;
+            }
+            if let Ok(read_buffer) = read_buffer_cp.lock() {
+                if read_buffer.contains("OK") { // TODO: Check what this actually needs to contain
+                    // Port ready to receive connect request.
+                    break;
+                }
+            }
+
+            timeout += 1;
+            sleep(Duration::from_millis(1));
+        }
+        // Send bytes
+        if let Err(e) = port_cp.write(&buff) {
+            println!("Failed to write message to wifi device");
+            *state = WifiState::Ready;
+        };
+        let _ = port_cp.flush();
+
         *state = WifiState::WaitingPublishAck;
-        // Tell how many bytes will be sent
-        // Wait for ack from port
-        // Send bytes
     });
 
+    let mut port_cp = port.try_clone()?;
+    let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::AckReceived, move |e, state| {
-        *state = WifiState::Sent;
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
         // Tell how many bytes will be sent
+        port_cp.write("AT+CIPSEND=2\r\n".as_bytes());
+        let _ = port_cp.flush();
         // Wait for ack from port
+        // Wait for ack from port
+        let mut timeout = 0;
+        loop {
+            if timeout > 10000 {
+                println!("Timed out on waiting ack from port.");
+                *state = WifiState::Ready;
+                return;
+            }
+            if let Ok(read_buffer) = read_buffer_cp.lock() {
+                if read_buffer.contains("OK") {
+                    // Port ready to receive connect request.
+                    break;
+                }
+            }
+
+            timeout += 1;
+            sleep(Duration::from_millis(1));
+        }
         // Send bytes
+        *state = WifiState::Sent;
     });
 
+    let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::Close, move |e, state| {
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
         // Tell how many bytes will be sent
         // Wait for ack from port
         // Send bytes
         *state = WifiState::Ready;
     });
 
+    let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::Timeout, move |e, state| {
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
         *state = WifiState::Ready;
     });
 
