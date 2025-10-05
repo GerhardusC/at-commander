@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let bytes_vec = parse_bytes(&trimmed_input, args.radix_input_buffer).map_err(|_| ErrorKind::Other)?;
                 bytes_vec
             // Send MQTT message
-            } else if trimmed_input.starts_with("con") {
+            } else if trimmed_input.starts_with("start") {
                 let addr: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
                 event_sender.send(Event::new(
@@ -96,16 +96,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
                 continue;
 
+            } else if trimmed_input.starts_with("con") {
+                event_sender.send(Event::new(WifiEvent::ConnAck, trimmed_input));
+                continue;
+
             } else if trimmed_input.starts_with("msg") {
                 event_sender.send(Event::new(WifiEvent::Publish, trimmed_input));
                 continue;
 
-            } else if trimmed_input.starts_with("start") {
-                event_sender.send(Event::new(WifiEvent::Publish, trimmed_input));
-                continue;
-
             } else if trimmed_input == "close" {
-                event_sender.send(Event::new(WifiEvent::Close, trimmed_input));
+                event_sender.send(Event::new(WifiEvent::AckReceived, trimmed_input));
                 continue;
 
             } else {
@@ -314,6 +314,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             sleep(Duration::from_millis(1));
         }
         // Send bytes
+        port_cp.write(&[0xE0, 0x00]);
         *state = WifiState::Sent;
     });
 
