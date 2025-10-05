@@ -1,8 +1,8 @@
 use std::{
-    error::Error, io::{stdin, ErrorKind}, thread::{self, sleep}, time::Duration
+    error::Error, io::{stdin, ErrorKind}, sync::{Arc, Mutex}, thread::{self, sleep}, time::Duration
 };
 
-use at_commander::{Event, EventLoop};
+use at_commander::{Event, EventLoop, WifiEvent, WifiState};
 use clap::{command, Parser};
 
 /// Simple program to communicate AT commands with the ESP-01 module.
@@ -45,6 +45,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut port_cp1 = port.try_clone()?;
     let mut port_cp2 = port.try_clone()?;
 
+    let input_buffer = Arc::new(Mutex::new(String::new()));
+
+    let input_buffer_to_write = input_buffer.clone();
+
     // READING TASK
     let tr1 = thread::spawn(move || {
         loop {
@@ -52,7 +56,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             match port_cp1.read(&mut buffer) {
                 Ok(bytes) => {
                     if bytes == 1 {
-                        print!("{}", String::from_utf8_lossy(&buffer));
+                        let bufstr = String::from_utf8_lossy(&buffer);
+                        if let Ok(mut input_buffer) = input_buffer_to_write.lock() {
+                            input_buffer.push_str(&bufstr);
+                        }
+                        print!("{}", bufstr);
                     }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
@@ -92,8 +100,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // 13-14	00 07	Client ID length	7 bytes
                 // 15-21	63 6C 69 65 6E 74 31	Client ID	"client1"
                 let msg = "\x10\x13\x00\x04\x4D\x51\x54\x54\x04\x02\x00\x3C\x00\x07client1".as_bytes().to_vec();
-                port.write(format!("AT+CIPSEND={}\r\n", msg.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
-                port.flush().map_err(|_| ErrorKind::Other)?;
+                port_cp2.write(format!("AT+CIPSEND={}\r\n", msg.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
+                port_cp2.flush().map_err(|_| ErrorKind::Other)?;
                 sleep(Duration::from_secs(1));
                 //                    10  13  00  04  4D  51  54  54  04  02  00  3C  00  07 63 6C 69 65 6E 74 31
                 msg
@@ -133,14 +141,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 println!("Sending {:?}", buff);
 
-                port.write(format!("AT+CIPSEND={}\r\n", buff.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
-                port.flush().map_err(|_| ErrorKind::Other)?;
+                port_cp2.write(format!("AT+CIPSEND={}\r\n", buff.len()).as_bytes()).map_err(|_| ErrorKind::Other)?;
+                port_cp2.flush().map_err(|_| ErrorKind::Other)?;
                 sleep(Duration::from_secs(1));
 
                 buff
             } else if trimmed_input == "test" {
                 tr2_sender.send(
-                    Event::new("connect".to_owned(), "asdasd".to_owned())
+                    Event::new(WifiEvent::PublishConnectRequest, "asdasd".to_owned())
                 );
                 "\r\n".as_bytes().to_vec()
 
@@ -149,8 +157,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", device_num.get(1).unwrap_or(&"243".to_owned())).as_bytes().to_vec()
             } else if trimmed_input == "close" {
 
-                port.write("AT+CIPSEND=2\r\n".as_bytes()).map_err(|_| ErrorKind::Other)?;
-                port.flush().map_err(|_| ErrorKind::Other)?;
+                port_cp2.write("AT+CIPSEND=2\r\n".as_bytes()).map_err(|_| ErrorKind::Other)?;
+                port_cp2.flush().map_err(|_| ErrorKind::Other)?;
                 sleep(Duration::from_secs(1));
 
                 vec![0xE0,0x00]
@@ -160,8 +168,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             println!("Sending {} bytes", payload.len());
 
-            let res = port.write(payload.as_slice());
-            port.flush().map_err(|_| ErrorKind::Other)?;
+            let res = port_cp2.write(payload.as_slice());
+            port_cp2.flush().map_err(|_| ErrorKind::Other)?;
 
             match res {
                 Ok(x) => {
@@ -176,19 +184,50 @@ fn main() -> Result<(), Box<dyn Error>> {
         Ok(())
     });
 
-    let connect_responsed_sender = event_loop.sender.clone();
-    event_loop.on("connected".to_owned(), move |e| {
-        port_cp2.write("".as_bytes());
+    // let mut port_cp3 = port.try_clone()?;
+    // Register handlers / state transitions
+    event_loop.on(WifiEvent::PublishConnectRequest, move |e, state| {
+        *state = WifiState::WaitingConnectAck;
+        // Open TCP Stream
+        // Wait ack
     });
 
-    event_loop.on("publish".to_owned(), |e| {
+    event_loop.on(WifiEvent::ConnAck, move |e, state| {
+        *state = WifiState::Connected;
+        // Tell how many bytes will be sent
+        // Wait for ack from port
+        // Send bytes
     });
 
-    event_loop.on("message".to_owned(), |e| {
+    event_loop.on(WifiEvent::Publish, move |e, state| {
+        *state = WifiState::WaitingPublishAck;
+        // Tell how many bytes will be sent
+        // Wait for ack from port
+        // Send bytes
     });
 
+    event_loop.on(WifiEvent::AckReceived, move |e, state| {
+        *state = WifiState::Sent;
+        // Tell how many bytes will be sent
+        // Wait for ack from port
+        // Send bytes
+    });
 
-    event_loop.start();
+    event_loop.on(WifiEvent::Close, move |e, state| {
+        // Tell how many bytes will be sent
+        // Wait for ack from port
+        // Send bytes
+        *state = WifiState::Ready;
+    });
+
+    event_loop.on(WifiEvent::Timeout, move |e, state| {
+        *state = WifiState::Ready;
+    });
+
+    // WAIT CLOSE CONFIRM ? INVALID ? Maybe add these
+
+    let mut initial_state = WifiState::Ready;
+    event_loop.start(&mut initial_state);
 
     tr1.join().map_err(|_e| {
         std::io::Error::new(std::io::ErrorKind::Other, format!("Something went wrong."))
