@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}, thread};
+use std::{collections::HashMap, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub enum WifiEvent {

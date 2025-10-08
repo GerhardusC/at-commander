@@ -66,7 +66,7 @@ fn wait_for_msg_on_buffer(msg: &str, read_buffer: Arc<Mutex<String>>, event_send
                 break;
             }
         }
-        if(timeout > 10000) {
+        if timeout > 1000 {
             break;
         }
         timeout += 1;
