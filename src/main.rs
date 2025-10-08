@@ -1,5 +1,5 @@
 use std::{
-    error::Error, io::{stdin, ErrorKind}, sync::{Arc, Mutex}, thread::{self, sleep}, time::Duration
+    error::Error, io::{stdin, ErrorKind}, sync::{mpsc::Sender, Arc, Mutex}, thread::{self, sleep}, time::Duration
 };
 
 use at_commander::{Event, EventLoop, WifiEvent, WifiState};
@@ -52,6 +52,26 @@ fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
         .map(|token| u8::from_str_radix(token, radix.into())
         .map_err(|_| format!("Invalid hex: {}", token)))
         .collect()
+}
+
+fn wait_for_msg_on_buffer(msg: &str, read_buffer: Arc<Mutex<String>>, event_sender: Sender<Event>, event: Event) {
+    let mut timeout = 0;
+    if let Ok(mut read_buffer) = read_buffer.lock() {
+        read_buffer.clear();
+    }
+    loop {
+        if let Ok(read_buffer) = read_buffer.lock() {
+            if read_buffer.contains(&msg.to_owned()) {
+                event_sender.send(event);
+                break;
+            }
+        }
+        if(timeout > 10000) {
+            break;
+        }
+        timeout += 1;
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -111,6 +131,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let bytes_vec = parse_bytes(&trimmed_input, args.radix_input_buffer).map_err(|_| ErrorKind::Other)?;
                 bytes_vec
             // Send MQTT message
+            } else if trimmed_input == "configure" {
+                event_sender.send(Event::new(
+                    WifiEvent::Configure,
+                    "".to_owned())
+                );
+                continue;
+
             } else if trimmed_input.starts_with("start") {
                 let addr: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
@@ -155,14 +182,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                     WifiEvent::PublishConnectRequest,
                     addr.to_owned(),
                 ));
-                thread::sleep(Duration::from_millis(200));
-                event_sender.send(Event::new(WifiEvent::ConnAck, "".to_owned()));
-                thread::sleep(Duration::from_millis(200));
-                event_sender.send(Event::new(WifiEvent::Publish, format!("msg:{}:{}", topic, message)));
-                thread::sleep(Duration::from_millis(200));
-                event_sender.send(Event::new(WifiEvent::AckReceived, "".to_owned()));
-                thread::sleep(Duration::from_millis(200));
 
+                wait_for_msg_on_buffer(
+                    "CONNECT",
+                    read_buffer_cp.clone(),
+                    event_sender.clone(),
+                    Event::new(WifiEvent::ConnAck, "".to_owned())
+                );
+
+                wait_for_msg_on_buffer(
+                    "SEND OK",
+                    read_buffer_cp.clone(),
+                    event_sender.clone(),
+                    Event::new(WifiEvent::Publish, format!("msg:{}:{}", topic, message))
+                );
+
+                wait_for_msg_on_buffer(
+                    "SEND OK",
+                    read_buffer_cp.clone(),
+                    event_sender.clone(),
+                    Event::new(WifiEvent::AckReceived, "".to_owned())
+                );
                 continue;
 
             } else {
@@ -191,10 +231,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::PublishConnectRequest, move |e, state| {
-        // Clear port read string.
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
-            read_buffer.clear();
-        };
         // Open TCP Stream
         let msg = format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", e.data);
         match port_cp.write(msg.as_bytes()) {
@@ -207,7 +243,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 state.change_to(WifiState::Ready);
             },
         };
+        // Clear port read string.
+        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
         let _ = port_cp.flush();
+    });
+
+    let mut port_cp = port.try_clone()?;
+    event_loop.on(WifiEvent::Configure, move |e, state| {
+        if let Err(e) = port_cp.write("ATE0\r\n".as_bytes()) {
+            println!("Failed to write message to wifi device");
+        };
     });
 
     let mut port_cp = port.try_clone()?;
@@ -216,7 +263,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Ok (mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
-
         // Client name always client 1.
         // Byte #	Value	Field	Description
         // 1	10	Fixed header	CONNECT packet, flags=0
@@ -263,9 +309,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if let Err(e) = port_cp.write(msg) {
                     println!("Failed to write message to wifi device");
                     state.change_to(WifiState::Ready);
-                } else {
-                    println!("WIFI CONNECT FINISHED.")
-                };
+                }
                 let _ = port_cp.flush();
 
                 state.change_to(WifiState::Connected);

@@ -2,6 +2,7 @@ use std::{collections::HashMap, error::Error, sync::{mpsc::{channel, Receiver, S
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub enum WifiEvent {
+    Configure,
     PublishConnectRequest,
     Timeout,
     ConnAck,
