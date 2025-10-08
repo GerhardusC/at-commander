@@ -92,9 +92,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let mut port_cp = port.try_clone()?;
+    let initial_state = Arc::new(Mutex::new(WifiState::Ready));
+    let state = initial_state.clone();
     // USER INPUT TASK
+    let mut port_cp = port.try_clone()?;
     let event_sender = event_loop.sender.clone();
+    let read_buffer_cp = read_buffer.clone();
     let tr2 = thread::spawn(move || -> Result<(), ErrorKind> {
         loop {
             let mut input = String::new();
@@ -122,11 +125,44 @@ fn main() -> Result<(), Box<dyn Error>> {
                 continue;
 
             } else if trimmed_input.starts_with("msg") {
-                event_sender.send(Event::new(WifiEvent::Publish, trimmed_input));
+                event_sender.send(
+                    Event::new(
+                        WifiEvent::Publish,
+                        trimmed_input
+                            .split_at_checked(3)
+                            .unwrap_or(("", "")).1
+                            .to_owned())
+                    );
                 continue;
 
             } else if trimmed_input == "close" {
                 event_sender.send(Event::new(WifiEvent::AckReceived, trimmed_input));
+                continue;
+
+            } else if trimmed_input.starts_with("full") {
+                // NOTE: SHAPE:
+                // full:addr:topic:msg
+                let args: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
+                let default_addr = String::from("243");
+                let default_topic = String::from("/home");
+                let default_message = String::from("heLLOAS");
+
+                let addr = args.get(1).unwrap_or(&default_addr);
+                let topic = args.get(2).unwrap_or(&default_topic);
+                let message = args.get(3).unwrap_or(&default_message);
+
+                event_sender.send(Event::new(
+                    WifiEvent::PublishConnectRequest,
+                    addr.to_owned(),
+                ));
+                thread::sleep(Duration::from_millis(200));
+                event_sender.send(Event::new(WifiEvent::ConnAck, "".to_owned()));
+                thread::sleep(Duration::from_millis(200));
+                event_sender.send(Event::new(WifiEvent::Publish, format!("msg:{}:{}", topic, message)));
+                thread::sleep(Duration::from_millis(200));
+                event_sender.send(Event::new(WifiEvent::AckReceived, "".to_owned()));
+                thread::sleep(Duration::from_millis(200));
+
                 continue;
 
             } else {
@@ -227,6 +263,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if let Err(e) = port_cp.write(msg) {
                     println!("Failed to write message to wifi device");
                     state.change_to(WifiState::Ready);
+                } else {
+                    println!("WIFI CONNECT FINISHED.")
                 };
                 let _ = port_cp.flush();
 
@@ -375,7 +413,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // WAIT CLOSE CONFIRM ? INVALID ? Maybe add these
 
-    let initial_state = Arc::new(Mutex::new(WifiState::Ready));
     event_loop.start(initial_state);
 
     tr1.join().map_err(|_e| {

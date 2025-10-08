@@ -10,7 +10,7 @@ pub enum WifiEvent {
     Close,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum WifiState {
     Ready,
     WaitingConnectAck,
