@@ -5,6 +5,27 @@ use std::{
 use at_commander::{Event, EventLoop, WifiEvent, WifiState};
 use clap::{command, Parser};
 
+
+pub trait TrackWifiState {
+    fn change_to(&self, new_state: WifiState);
+    fn get(&self) -> WifiState;
+}
+
+impl TrackWifiState for Arc<Mutex<WifiState>> {
+    fn change_to(&self, new_state: WifiState) {
+        match self.lock() {
+            Ok(mut state) => *state = new_state,
+            Err(_) => println!("Something went wrong while locking wifi state mux"),
+        }
+    }
+    fn get(&self) -> WifiState {
+        match self.lock() {
+            Ok(state) => (*state).clone(),
+            Err(_) => WifiState::Invalid,
+        }
+    }
+}
+
 /// Simple program to communicate AT commands with the ESP-01 module.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -38,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let event_loop = EventLoop::new();
 
-    let mut port = serialport::new(&args.port, args.baud_rate)
+    let port = serialport::new(&args.port, args.baud_rate)
         .timeout(Duration::from_millis(100))
         .open()?;
 
@@ -142,12 +163,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let msg = format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", e.data);
         match port_cp.write(msg.as_bytes()) {
             Ok(bytes_written) => {
-                *state = WifiState::WaitingConnectAck;
+                state.change_to(WifiState::WaitingConnectAck);
                 println!("Bytes written: {}", bytes_written);
             },
             Err(e) => {
                 println!("{e}");
-                *state = WifiState::Ready;
+                state.change_to(WifiState::Ready);
             },
         };
         let _ = port_cp.flush();
@@ -176,36 +197,42 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Tell how many bytes will be sent, don't care about bytes written.
         if let Err(e) = port_cp.write(format!("AT+CIPSEND={}\r\n", msg.len()).as_bytes()) {
             println!("{e}");
-            *state = WifiState::Ready;
+            state.change_to(WifiState::Ready);
             return;
         };
         let _ = port_cp.flush();
-        // Wait for ack from port
-        let mut timeout = 0;
-        loop {
-            if timeout > 10000 {
-                println!("Timed out on waiting ack from port.");
-                *state = WifiState::Ready;
-                return;
-            }
-            if let Ok(read_buffer) = read_buffer_cp.lock() {
-                if read_buffer.contains("OK") {
-                    // Port ready to receive connect request.
-                    break;
+
+        // Wait for ack from port off this thread.
+        if let Ok(mut port_cp) = port_cp.try_clone() {
+            let read_buffer_cp = read_buffer_cp.clone();
+            thread::spawn(move || {
+                let mut timeout = 0;
+                loop {
+                    if timeout > 10000 {
+                        println!("Timed out on waiting ack from port.");
+                        state.change_to(WifiState::Ready);
+                        return;
+                    }
+                    if let Ok(read_buffer) = read_buffer_cp.lock() {
+                        if read_buffer.contains("OK") {
+                            // Port ready to receive connect request.
+                            break;
+                        }
+                    }
+
+                    timeout += 1;
+                    sleep(Duration::from_millis(1));
                 }
-            }
+                // Send bytes
+                if let Err(e) = port_cp.write(msg) {
+                    println!("Failed to write message to wifi device");
+                    state.change_to(WifiState::Ready);
+                };
+                let _ = port_cp.flush();
 
-            timeout += 1;
-            sleep(Duration::from_millis(1));
+                state.change_to(WifiState::Connected);
+            });
         }
-        // Send bytes
-        if let Err(e) = port_cp.write(msg) {
-            println!("Failed to write message to wifi device");
-            *state = WifiState::Ready;
-        };
-        let _ = port_cp.flush();
-
-        *state = WifiState::Connected;
     });
 
     let mut port_cp = port.try_clone()?;
@@ -252,37 +279,42 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if let Err(e) = port_cp.write(format!("AT+CIPSEND={}\r\n", buff.len()).as_bytes()) {
             println!("Failed to write message to wifi device");
-            *state = WifiState::Ready;
+            state.change_to(WifiState::Ready);
         };
 
         let _ = port_cp.flush();
 
         // Wait for ack from port
-        let mut timeout = 0;
-        loop {
-            if timeout > 10000 {
-                println!("Timed out on waiting ack from port.");
-                *state = WifiState::Ready;
-                return;
-            }
-            if let Ok(read_buffer) = read_buffer_cp.lock() {
-                if read_buffer.contains("OK") { // TODO: Check what this actually needs to contain
-                    // Port ready to receive connect request.
-                    break;
+        if let Ok(mut port_cp) = port_cp.try_clone() {
+            let read_buffer_cp = read_buffer_cp.clone();
+            thread::spawn(move || {
+                let mut timeout = 0;
+                loop {
+                    if timeout > 10000 {
+                        println!("Timed out on waiting ack from port.");
+                        state.change_to(WifiState::Ready);
+                        return;
+                    }
+                    if let Ok(read_buffer) = read_buffer_cp.lock() {
+                        if read_buffer.contains("OK") { // TODO: Check what this actually needs to contain
+                            // Port ready to receive connect request.
+                            break;
+                        }
+                    }
+
+                    timeout += 1;
+                    sleep(Duration::from_millis(1));
                 }
-            }
+                // Send bytes
+                if let Err(e) = port_cp.write(&buff) {
+                    println!("Failed to write message to wifi device");
+                    state.change_to(WifiState::Ready);
+                };
+                let _ = port_cp.flush();
 
-            timeout += 1;
-            sleep(Duration::from_millis(1));
+                state.change_to(WifiState::WaitingPublishAck);
+            });
         }
-        // Send bytes
-        if let Err(e) = port_cp.write(&buff) {
-            println!("Failed to write message to wifi device");
-            *state = WifiState::Ready;
-        };
-        let _ = port_cp.flush();
-
-        *state = WifiState::WaitingPublishAck;
     });
 
     let mut port_cp = port.try_clone()?;
@@ -295,27 +327,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         port_cp.write("AT+CIPSEND=2\r\n".as_bytes());
         let _ = port_cp.flush();
         // Wait for ack from port
-        // Wait for ack from port
-        let mut timeout = 0;
-        loop {
-            if timeout > 10000 {
-                println!("Timed out on waiting ack from port.");
-                *state = WifiState::Ready;
-                return;
-            }
-            if let Ok(read_buffer) = read_buffer_cp.lock() {
-                if read_buffer.contains("OK") {
-                    // Port ready to receive connect request.
-                    break;
-                }
-            }
+        if let Ok(mut port_cp) = port_cp.try_clone() {
+            let read_buffer_cp = read_buffer_cp.clone();
+            thread::spawn(move || {
+                let mut timeout = 0;
+                loop {
+                    if timeout > 10000 {
+                        println!("Timed out on waiting ack from port.");
+                        state.change_to(WifiState::Ready);
+                        return;
+                    }
+                    if let Ok(read_buffer) = read_buffer_cp.lock() {
+                        if read_buffer.contains("OK") {
+                            // Port ready to receive connect request.
+                            break;
+                        }
+                    }
 
-            timeout += 1;
-            sleep(Duration::from_millis(1));
+                    timeout += 1;
+                    sleep(Duration::from_millis(1));
+                }
+                // Send bytes
+                port_cp.write(&[0xE0, 0x00]);
+                state.change_to(WifiState::Sent);
+            });
         }
-        // Send bytes
-        port_cp.write(&[0xE0, 0x00]);
-        *state = WifiState::Sent;
     });
 
     let read_buffer_cp = read_buffer.clone();
@@ -326,7 +362,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Tell how many bytes will be sent
         // Wait for ack from port
         // Send bytes
-        *state = WifiState::Ready;
+        state.change_to(WifiState::Ready);
     });
 
     let read_buffer_cp = read_buffer.clone();
@@ -334,13 +370,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Ok (mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
-        *state = WifiState::Ready;
+        state.change_to(WifiState::Ready);
     });
 
     // WAIT CLOSE CONFIRM ? INVALID ? Maybe add these
 
-    let mut initial_state = WifiState::Ready;
-    event_loop.start(&mut initial_state);
+    let initial_state = Arc::new(Mutex::new(WifiState::Ready));
+    event_loop.start(initial_state);
 
     tr1.join().map_err(|_e| {
         std::io::Error::new(std::io::ErrorKind::Other, format!("Something went wrong."))
