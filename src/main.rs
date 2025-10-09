@@ -1,11 +1,14 @@
 use std::{
-    error::Error, io::{stdin, ErrorKind}, sync::{mpsc::Sender, Arc, Mutex}, thread::{self, sleep, JoinHandle}, time::Duration
+    error::Error,
+    io::{ErrorKind, stdin},
+    sync::{Arc, Mutex, mpsc::Sender},
+    thread::{self, JoinHandle, sleep},
+    time::Duration,
 };
 
 use at_commander::{Event, EventLoop, WifiEvent, WifiState};
-use clap::{command, Parser};
+use clap::{Parser, command};
 use serialport::SerialPort;
-
 
 pub trait TrackWifiState {
     fn change_to(&self, new_state: WifiState);
@@ -42,7 +45,7 @@ struct Args {
     /// By ending an input string with the "~" character, you may specify to send a buffer
     /// instead of an ASCII string. This argument determines the base in which your buffer will
     /// be interpreted. By default it is 16, i.e. your buffers need to be HEX values split by
-    /// spaces. E.G. "0F F0 30 40 5C~" etc. 
+    /// spaces. E.G. "0F F0 30 40 5C~" etc.
     #[arg(short, long, default_value_t = 16)]
     radix_input_buffer: u8,
 }
@@ -50,8 +53,9 @@ struct Args {
 fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
     input
         .split_whitespace()
-        .map(|token| u8::from_str_radix(token, radix.into())
-        .map_err(|_| format!("Invalid hex: {}", token)))
+        .map(|token| {
+            u8::from_str_radix(token, radix.into()).map_err(|_| format!("Invalid hex: {}", token))
+        })
         .collect()
 }
 
@@ -59,7 +63,7 @@ fn wait_for_msg_on_buffer(
     msg: &str,
     read_buffer: Arc<Mutex<String>>,
     event_sender: Sender<Event>,
-    event: Event
+    event: Event,
 ) {
     let mut timeout = 0;
     if let Ok(mut read_buffer) = read_buffer.lock() {
@@ -84,29 +88,30 @@ fn wait_for_msg_on_buffer(
 
 fn read_port_buffer_task(
     port: &Box<dyn SerialPort>,
-    read_buffer: Arc<Mutex<String>>
+    read_buffer: Arc<Mutex<String>>,
 ) -> Result<JoinHandle<()>, Box<dyn Error>> {
     let mut port = port.try_clone()?;
     let jh = thread::spawn(move || {
-    loop {
-        let mut buffer: [u8; 1] = [0; 1];
-        match port.read(&mut buffer) {
-            Ok(bytes) => {
-                if bytes == 1 {
-                    let bufstr = String::from_utf8_lossy(&buffer);
-                    if let Ok(mut input_buffer) = read_buffer.lock() {
-                        input_buffer.push_str(&bufstr);
+        loop {
+            let mut buffer: [u8; 1] = [0; 1];
+            match port.read(&mut buffer) {
+                Ok(bytes) => {
+                    if bytes == 1 {
+                        let bufstr = String::from_utf8_lossy(&buffer);
+                        if let Ok(mut input_buffer) = read_buffer.lock() {
+                            input_buffer.push_str(&bufstr);
+                        }
+                        print!("{}", bufstr);
                     }
-                    print!("{}", bufstr);
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
+                Err(e) => {
+                    eprintln!("{:?}", e);
+                    break;
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
-            Err(e) => {
-                eprintln!("{:?}", e);
-                break;
-            },
         }
-    }});
+    });
     Ok(jh)
 }
 
@@ -126,51 +131,46 @@ fn user_input_task(
     let jh = thread::spawn(move || -> Result<(), ErrorKind> {
         loop {
             let mut input = String::new();
-            let _bytes_read_to_input = stdin().read_line(&mut input).map_err(|_| ErrorKind::Other)?;
+            let _bytes_read_to_input = stdin()
+                .read_line(&mut input)
+                .map_err(|_| ErrorKind::Other)?;
 
             let mut trimmed_input = input.trim().to_owned();
 
             // Send raw bytes if string ends with ~
             let payload = if trimmed_input.ends_with("~") {
                 trimmed_input.pop();
-                let bytes_vec = parse_bytes(&trimmed_input, args.radix_input_buffer).map_err(|_| ErrorKind::Other)?;
+                let bytes_vec = parse_bytes(&trimmed_input, args.radix_input_buffer)
+                    .map_err(|_| ErrorKind::Other)?;
                 bytes_vec
             // Send MQTT message
             } else if trimmed_input == "configure" {
-                event_sender.send(Event::new(
-                    WifiEvent::Configure,
-                    "".to_owned())
-                );
+                event_sender.send(Event::new(WifiEvent::Configure, "".to_owned()));
                 continue;
-
             } else if trimmed_input.starts_with("start") {
                 let addr: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
                 event_sender.send(Event::new(
                     WifiEvent::PublishConnectRequest,
-                    addr.get(1).unwrap_or(&"243".to_owned()).to_owned())
-                );
+                    addr.get(1).unwrap_or(&"243".to_owned()).to_owned(),
+                ));
                 continue;
-
             } else if trimmed_input.starts_with("con") {
                 event_sender.send(Event::new(WifiEvent::ConnAck, trimmed_input));
                 continue;
-
             } else if trimmed_input.starts_with("msg") {
-                event_sender.send(
-                    Event::new(
-                        WifiEvent::Publish,
-                        trimmed_input
-                            .split_at_checked(3)
-                            .unwrap_or(("", "")).1
-                            .to_owned())
-                    );
+                event_sender.send(Event::new(
+                    WifiEvent::Publish,
+                    trimmed_input
+                        .split_at_checked(3)
+                        .unwrap_or(("", ""))
+                        .1
+                        .to_owned(),
+                ));
                 continue;
-
             } else if trimmed_input == "close" {
                 event_sender.send(Event::new(WifiEvent::AckReceived, trimmed_input));
                 continue;
-
             } else if trimmed_input.starts_with("full") {
                 // NOTE: SHAPE:
                 // full:addr:topic:msg
@@ -192,24 +192,23 @@ fn user_input_task(
                     "CONNECT",
                     read_buffer_cp.clone(),
                     event_sender.clone(),
-                    Event::new(WifiEvent::ConnAck, "".to_owned())
+                    Event::new(WifiEvent::ConnAck, "".to_owned()),
                 );
 
                 wait_for_msg_on_buffer(
                     "SEND OK",
                     read_buffer_cp.clone(),
                     event_sender.clone(),
-                    Event::new(WifiEvent::Publish, format!("msg:{}:{}", topic, message))
+                    Event::new(WifiEvent::Publish, format!("msg:{}:{}", topic, message)),
                 );
 
                 wait_for_msg_on_buffer(
                     "SEND OK",
                     read_buffer_cp.clone(),
                     event_sender.clone(),
-                    Event::new(WifiEvent::AckReceived, "".to_owned())
+                    Event::new(WifiEvent::AckReceived, "".to_owned()),
                 );
                 continue;
-
             } else {
                 (trimmed_input.to_owned() + "\r\n").as_bytes().to_vec()
             };
@@ -237,7 +236,7 @@ fn user_input_task(
 fn register_event_handlers(
     event_loop: &EventLoop,
     read_buffer: Arc<Mutex<String>>,
-    port: &Box<dyn SerialPort>
+    port: &Box<dyn SerialPort>,
 ) -> Result<(), Box<dyn Error>> {
     // Register handlers / state transitions
     let mut port_cp = port.try_clone()?;
@@ -249,14 +248,14 @@ fn register_event_handlers(
             Ok(bytes_written) => {
                 state.change_to(WifiState::WaitingConnectAck);
                 println!("Bytes written: {}", bytes_written);
-            },
+            }
             Err(e) => {
                 println!("{e}");
                 state.change_to(WifiState::Ready);
-            },
+            }
         };
         // Clear port read string.
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
         let _ = port_cp.flush();
@@ -272,7 +271,7 @@ fn register_event_handlers(
     let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::ConnAck, move |e, state| {
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
         // Client name always client 1.
@@ -332,7 +331,7 @@ fn register_event_handlers(
     let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::Publish, move |e, state| {
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
         // Tell how many bytes will be sent
@@ -355,7 +354,7 @@ fn register_event_handlers(
         // 1	30	Fixed header	PUBLISH packet, QoS=0, DUP=0, Retain=0
         // 2	12	Remaining Length	18 bytes (variable header + payload)
         // 3-4	00 0B	Topic Name Length	11 bytes
-        // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"	
+        // 5-15	2F 74 65 73 74 2F 74 6F 70 69 63	Topic Name = "/test/topic"
         // 16-20	68 65 6C 6C 6F	Payload = "hello"
         let mut buff: Vec<u8> = vec![
             0x30,
@@ -365,7 +364,6 @@ fn register_event_handlers(
         ];
 
         let mut topic_msg_u8 = (topic + &message).into_bytes();
-
 
         buff.append(&mut topic_msg_u8);
 
@@ -390,7 +388,8 @@ fn register_event_handlers(
                         return;
                     }
                     if let Ok(read_buffer) = read_buffer_cp.lock() {
-                        if read_buffer.contains("OK") { // TODO: Check what this actually needs to contain
+                        if read_buffer.contains("OK") {
+                            // TODO: Check what this actually needs to contain
                             // Port ready to receive connect request.
                             break;
                         }
@@ -414,7 +413,7 @@ fn register_event_handlers(
     let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::AckReceived, move |e, state| {
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
         // Tell how many bytes will be sent
@@ -450,7 +449,7 @@ fn register_event_handlers(
 
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::Close, move |e, state| {
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
         // Tell how many bytes will be sent
@@ -461,7 +460,7 @@ fn register_event_handlers(
 
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::Timeout, move |e, state| {
-        if let Ok (mut read_buffer) = read_buffer_cp.lock() {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
             read_buffer.clear();
         };
         state.change_to(WifiState::Ready);
@@ -477,7 +476,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .timeout(Duration::from_millis(100))
         .open()?;
 
-
     let read_buffer = Arc::new(Mutex::new(String::new()));
 
     // READING TASK
@@ -489,7 +487,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &port,
         &event_loop,
         read_buffer.clone(),
-        args
+        args,
     );
 
     // Register handlers / state transitions
@@ -500,18 +498,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     event_loop.start(initial_state.clone());
 
     tr1.join().map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("Read Port Buffer Task failed: {:?}", e))
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Read Port Buffer Task failed: {:?}", e),
+        )
     })?;
     let res = tr2?.join().map_err(|_e| {
-        std::io::Error::new(std::io::ErrorKind::Other, "Something went wrong in user input task")
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Something went wrong in user input task",
+        )
     })?;
     match res {
         Ok(_) => {
             println!("Returned without errors");
-        },
+        }
         Err(_e) => {
             println!("Something went wrong somewhere, if my code were better, we would know where");
-        },
+        }
     }
 
     Ok(())

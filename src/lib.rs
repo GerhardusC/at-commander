@@ -1,4 +1,10 @@
-use std::{collections::HashMap, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        mpsc::{Receiver, Sender, channel},
+    },
+};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub enum WifiEvent {
@@ -41,13 +47,17 @@ impl From<Event> for String {
 pub struct EventLoop {
     receiver: Receiver<Event>,
     pub sender: Sender<Event>,
-    handlers: Arc<Mutex<HashMap<WifiEvent, Box<dyn FnMut(Event, Arc<Mutex<WifiState>>) -> ()>>>>
+    handlers: Arc<Mutex<HashMap<WifiEvent, Box<dyn FnMut(Event, Arc<Mutex<WifiState>>) -> ()>>>>,
 }
 
 impl EventLoop {
     pub fn new() -> Self {
         let (sender, receiver) = channel::<Event>();
-        EventLoop { receiver, sender, handlers: Arc::new(Mutex::new(HashMap::new())) }
+        EventLoop {
+            receiver,
+            sender,
+            handlers: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn start(&self, state: Arc<Mutex<WifiState>>) {
@@ -61,23 +71,20 @@ impl EventLoop {
                             ex(msg, state.clone());
                         }
                     }
-                },
+                }
                 Err(e) => {
                     println!("{}", e);
-                },
+                }
             }
         }
     }
 
     pub fn on<F>(&self, event: WifiEvent, func: F)
     where
-        F : FnMut(Event, Arc<Mutex<WifiState>>) -> () + Send + 'static
+        F: FnMut(Event, Arc<Mutex<WifiState>>) -> () + Send + 'static,
     {
         if let Ok(mut handlers) = self.handlers.lock() {
-            handlers.insert(
-                event,
-                Box::new(func)
-            );
+            handlers.insert(event, Box::new(func));
         }
     }
 }
