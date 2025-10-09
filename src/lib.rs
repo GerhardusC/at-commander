@@ -14,10 +14,10 @@ pub enum WifiEvent {
     ConnAck,
     Publish,
     AckReceived,
-    Close,
+    Reset,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WifiState {
     Ready,
     WaitingConnectAck,
