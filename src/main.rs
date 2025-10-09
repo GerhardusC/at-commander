@@ -1,9 +1,10 @@
 use std::{
-    error::Error, io::{stdin, ErrorKind}, sync::{mpsc::Sender, Arc, Mutex}, thread::{self, sleep}, time::Duration
+    error::Error, io::{stdin, ErrorKind}, sync::{mpsc::Sender, Arc, Mutex}, thread::{self, sleep, JoinHandle}, time::Duration
 };
 
 use at_commander::{Event, EventLoop, WifiEvent, WifiState};
 use clap::{command, Parser};
+use serialport::SerialPort;
 
 
 pub trait TrackWifiState {
@@ -54,7 +55,12 @@ fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-fn wait_for_msg_on_buffer(msg: &str, read_buffer: Arc<Mutex<String>>, event_sender: Sender<Event>, event: Event) {
+fn wait_for_msg_on_buffer(
+    msg: &str,
+    read_buffer: Arc<Mutex<String>>,
+    event_sender: Sender<Event>,
+    event: Event
+) {
     let mut timeout = 0;
     if let Ok(mut read_buffer) = read_buffer.lock() {
         read_buffer.clear();
@@ -62,7 +68,9 @@ fn wait_for_msg_on_buffer(msg: &str, read_buffer: Arc<Mutex<String>>, event_send
     loop {
         if let Ok(read_buffer) = read_buffer.lock() {
             if read_buffer.contains(&msg.to_owned()) {
-                event_sender.send(event);
+                if let Err(e) = event_sender.send(event) {
+                    println!("{e}");
+                };
                 break;
             }
         }
@@ -74,51 +82,48 @@ fn wait_for_msg_on_buffer(msg: &str, read_buffer: Arc<Mutex<String>>, event_send
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
-
-    let event_loop = EventLoop::new();
-
-    let port = serialport::new(&args.port, args.baud_rate)
-        .timeout(Duration::from_millis(100))
-        .open()?;
-
-    let mut port_cp = port.try_clone()?;
-
-    let read_buffer = Arc::new(Mutex::new(String::new()));
-
-    let read_buffer_writer = read_buffer.clone();
-
-    // READING TASK
-    let tr1 = thread::spawn(move || {
-        loop {
-            let mut buffer: [u8; 1] = [0; 1];
-            match port_cp.read(&mut buffer) {
-                Ok(bytes) => {
-                    if bytes == 1 {
-                        let bufstr = String::from_utf8_lossy(&buffer);
-                        if let Ok(mut input_buffer) = read_buffer_writer.lock() {
-                            input_buffer.push_str(&bufstr);
-                        }
-                        print!("{}", bufstr);
+fn read_port_buffer_task(
+    port: &Box<dyn SerialPort>,
+    read_buffer: Arc<Mutex<String>>
+) -> Result<JoinHandle<()>, Box<dyn Error>> {
+    let mut port = port.try_clone()?;
+    let jh = thread::spawn(move || {
+    loop {
+        let mut buffer: [u8; 1] = [0; 1];
+        match port.read(&mut buffer) {
+            Ok(bytes) => {
+                if bytes == 1 {
+                    let bufstr = String::from_utf8_lossy(&buffer);
+                    if let Ok(mut input_buffer) = read_buffer.lock() {
+                        input_buffer.push_str(&bufstr);
                     }
+                    print!("{}", bufstr);
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
-                Err(e) => {
-                    eprintln!("{:?}", e);
-                    break;
-                },
             }
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
+            Err(e) => {
+                eprintln!("{:?}", e);
+                break;
+            },
         }
-    });
+    }});
+    Ok(jh)
+}
 
-    let initial_state = Arc::new(Mutex::new(WifiState::Ready));
-    let state = initial_state.clone();
+fn user_input_task(
+    state: Arc<Mutex<WifiState>>,
+    port: &Box<dyn SerialPort>,
+    event_loop: &EventLoop,
+    read_buffer: Arc<Mutex<String>>,
+    args: Args,
+) -> Result<JoinHandle<Result<(), ErrorKind>>, Box<dyn Error>> {
+    // TODO: use this state to verify state changes are valid.
+    let state = state.clone();
     // USER INPUT TASK
     let mut port_cp = port.try_clone()?;
     let event_sender = event_loop.sender.clone();
     let read_buffer_cp = read_buffer.clone();
-    let tr2 = thread::spawn(move || -> Result<(), ErrorKind> {
+    let jh = thread::spawn(move || -> Result<(), ErrorKind> {
         loop {
             let mut input = String::new();
             let _bytes_read_to_input = stdin().read_line(&mut input).map_err(|_| ErrorKind::Other)?;
@@ -226,7 +231,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Ok(())
     });
+    Ok(jh)
+}
 
+fn register_event_handlers(
+    event_loop: &EventLoop,
+    read_buffer: Arc<Mutex<String>>,
+    port: &Box<dyn SerialPort>
+) -> Result<(), Box<dyn Error>> {
     // Register handlers / state transitions
     let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
@@ -454,23 +466,51 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         state.change_to(WifiState::Ready);
     });
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+    let event_loop = EventLoop::new();
+
+    let port = serialport::new(&args.port, args.baud_rate)
+        .timeout(Duration::from_millis(100))
+        .open()?;
+
+
+    let read_buffer = Arc::new(Mutex::new(String::new()));
+
+    // READING TASK
+    let tr1 = read_port_buffer_task(&port, read_buffer.clone())?;
+
+    let initial_state = Arc::new(Mutex::new(WifiState::Ready));
+    let tr2 = user_input_task(
+        initial_state.clone(),
+        &port,
+        &event_loop,
+        read_buffer.clone(),
+        args
+    );
+
+    // Register handlers / state transitions
+    register_event_handlers(&event_loop, read_buffer.clone(), &port)?;
 
     // WAIT CLOSE CONFIRM ? INVALID ? Maybe add these
 
-    event_loop.start(initial_state);
+    event_loop.start(initial_state.clone());
 
-    tr1.join().map_err(|_e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("Something went wrong."))
+    tr1.join().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("Read Port Buffer Task failed: {:?}", e))
     })?;
-    let res = tr2.join().map_err(|_e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("Something went wrong."))
+    let res = tr2?.join().map_err(|_e| {
+        std::io::Error::new(std::io::ErrorKind::Other, "Something went wrong in user input task")
     })?;
     match res {
         Ok(_) => {
             println!("Returned without errors");
         },
         Err(_e) => {
-            println!("Something went wrong somewhere, if your code were better, we would know where");
+            println!("Something went wrong somewhere, if my code were better, we would know where");
         },
     }
 
