@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use at_commander::{args::Args, event_handlers::register_event_handlers, event_loop::{EventLoop, WifiState}, port_input::read_port_buffer_task, user_input::user_input_task};
+use at_commander::{args::Args, event_handlers::register_event_handlers, event_loop::EventLoop, port_input::read_port_buffer_task, user_input::user_input_task};
 use clap::Parser;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -20,13 +20,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // READING TASK
     let tr1 = read_port_buffer_task(&port, read_buffer.clone())?;
 
-    let initial_state = Arc::new(Mutex::new(WifiState::Ready));
     let tr2 = user_input_task(
         &port,
         &event_loop,
         read_buffer.clone(),
         args,
-        initial_state.clone(),
     );
 
     // Register handlers / state transitions
@@ -34,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // WAIT CLOSE CONFIRM ? INVALID ? Maybe add these
 
-    event_loop.start(initial_state.clone());
+    event_loop.start();
 
     tr1.join().map_err(|e| {
         std::io::Error::new(

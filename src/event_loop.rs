@@ -6,27 +6,6 @@ use std::{
     },
 };
 
-pub trait TrackWifiState {
-    fn change_to(&self, new_state: WifiState);
-    fn get(&self) -> WifiState;
-}
-
-impl TrackWifiState for Arc<Mutex<WifiState>> {
-    fn change_to(&self, new_state: WifiState) {
-        match self.lock() {
-            Ok(mut state) => *state = new_state,
-            Err(_) => println!("Something went wrong while locking wifi state mux"),
-        }
-    }
-    fn get(&self) -> WifiState {
-        match self.lock() {
-            Ok(state) => (*state).clone(),
-            Err(_) => WifiState::Invalid,
-        }
-    }
-}
-
-
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub enum WifiEvent {
     Configure,
@@ -37,16 +16,6 @@ pub enum WifiEvent {
     AckReceived,
     Close,
     Reset,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WifiState {
-    Ready,
-    WaitingConnectAck,
-    Connected,
-    WaitingPublishAck,
-    Sent,
-    Invalid,
 }
 
 pub struct Event {
@@ -69,7 +38,7 @@ impl From<Event> for String {
 pub struct EventLoop {
     receiver: Receiver<Event>,
     pub sender: Sender<Event>,
-    handlers: Arc<Mutex<HashMap<WifiEvent, Box<dyn FnMut(Event, Arc<Mutex<WifiState>>) -> ()>>>>,
+    handlers: Arc<Mutex<HashMap<WifiEvent, Box<dyn FnMut(Event) -> ()>>>>,
 }
 
 impl EventLoop {
@@ -82,7 +51,7 @@ impl EventLoop {
         }
     }
 
-    pub fn start(&self, state: Arc<Mutex<WifiState>>) {
+    pub fn start(&self) {
         loop {
             let msg = self.receiver.recv();
             match msg {
@@ -90,7 +59,7 @@ impl EventLoop {
                     if let Ok(mut handlers) = self.handlers.try_lock() {
                         let event = handlers.get_mut(&msg.event);
                         if let Some(ex) = event {
-                            ex(msg, state.clone());
+                            ex(msg);
                         }
                     }
                 }
@@ -103,7 +72,7 @@ impl EventLoop {
 
     pub fn on<F>(&self, event: WifiEvent, func: F)
     where
-        F: FnMut(Event, Arc<Mutex<WifiState>>) -> () + Send + 'static,
+        F: FnMut(Event) -> () + Send + 'static,
     {
         if let Ok(mut handlers) = self.handlers.lock() {
             handlers.insert(event, Box::new(func));
