@@ -3,7 +3,6 @@ use std::{
     io::{ErrorKind, stdin},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use serialport::SerialPort;

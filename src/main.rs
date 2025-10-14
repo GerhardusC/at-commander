@@ -12,7 +12,7 @@ use clap::Parser;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    let event_loop = EventLoop::new();
+    let mut event_loop = EventLoop::new();
 
     let port = serialport::new(&args.port, args.baud_rate)
         .timeout(Duration::from_millis(100))
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let tr2 = user_input_task(&port, &event_loop, read_buffer.clone(), args);
 
     // Register handlers / state transitions
-    register_event_handlers(&event_loop, read_buffer.clone(), &port)?;
+    register_event_handlers(&mut event_loop, read_buffer.clone(), &port)?;
 
     // WAIT CLOSE CONFIRM ? INVALID ? Maybe add these
 

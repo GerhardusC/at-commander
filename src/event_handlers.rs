@@ -10,7 +10,7 @@ use serialport::SerialPort;
 use crate::event_loop::{EventLoop, WifiEvent};
 
 pub fn register_event_handlers(
-    event_loop: &EventLoop,
+    event_loop: &mut EventLoop,
     read_buffer: Arc<Mutex<String>>,
     port: &Box<dyn SerialPort>,
 ) -> Result<(), Box<dyn Error>> {

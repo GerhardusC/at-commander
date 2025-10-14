@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
         mpsc::{Receiver, Sender, channel},
     },
 };
@@ -38,7 +37,7 @@ impl From<Event> for String {
 pub struct EventLoop {
     receiver: Receiver<Event>,
     pub sender: Sender<Event>,
-    handlers: Arc<Mutex<HashMap<WifiEvent, Box<dyn FnMut(Event) -> ()>>>>,
+    handlers: HashMap<WifiEvent, Box<dyn FnMut(Event) -> ()>>,
 }
 
 impl EventLoop {
@@ -47,21 +46,19 @@ impl EventLoop {
         EventLoop {
             receiver,
             sender,
-            handlers: Arc::new(Mutex::new(HashMap::new())),
+            handlers: HashMap::new(),
         }
     }
 
-    pub fn start(&self) {
+    pub fn start(&mut self) {
         loop {
             let msg = self.receiver.recv();
             match msg {
                 Ok(msg) => {
-                    if let Ok(mut handlers) = self.handlers.try_lock() {
-                        let event = handlers.get_mut(&msg.event);
+                        let event = self.handlers.get_mut(&msg.event);
                         if let Some(ex) = event {
                             ex(msg);
                         }
-                    }
                 }
                 Err(e) => {
                     println!("{}", e);
@@ -70,12 +67,10 @@ impl EventLoop {
         }
     }
 
-    pub fn on<F>(&self, event: WifiEvent, func: F)
+    pub fn on<F>(&mut self, event: WifiEvent, func: F)
     where
         F: FnMut(Event) -> () + Send + 'static,
     {
-        if let Ok(mut handlers) = self.handlers.lock() {
-            handlers.insert(event, Box::new(func));
-        }
+        self.handlers.insert(event, Box::new(func));
     }
 }
