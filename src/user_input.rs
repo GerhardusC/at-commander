@@ -1,13 +1,13 @@
 use std::{
     error::Error,
-    io::{ErrorKind, stdin},
+    io::{stdin, ErrorKind},
     sync::{Arc, Mutex},
-    thread::{self, JoinHandle},
+    thread::{self, JoinHandle}, time::Duration,
 };
 
 use serialport::SerialPort;
 
-use crate::{args::Args, event_loop::{Event, EventLoop, WifiEvent}, utils::{parse_bytes, wait_for_msg_on_buffer}};
+use crate::{args::Args, event_loop::{Event, EventLoop, TrackWifiState, WifiEvent, WifiState}, utils::{parse_bytes, wait_for_msg_on_buffer}};
 
 
 pub fn user_input_task(
@@ -15,6 +15,7 @@ pub fn user_input_task(
     event_loop: &EventLoop,
     read_buffer: Arc<Mutex<String>>,
     args: Args,
+    state: Arc<Mutex<WifiState>>,
 ) -> Result<JoinHandle<Result<(), ErrorKind>>, Box<dyn Error>> {
     let mut port_cp = port.try_clone()?;
     let event_sender = event_loop.sender.clone();
@@ -61,10 +62,28 @@ pub fn user_input_task(
                         .1
                         .to_owned(),
                 ));
+
+                let mut timeout = 0;
+
+                loop {
+                    if let WifiState::WaitingPublishAck = state.get() {
+                        println!("State changed");
+                        break;
+                    };
+
+                    timeout += 1;
+                    if timeout > 10000 {
+                        println!("Timed out waiting on state change");
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+                event_sender.send(Event::new(WifiEvent::AckReceived, "".to_owned()));
                 continue;
             } else if trimmed_input == "close" {
-                event_sender.send(Event::new(WifiEvent::AckReceived, trimmed_input));
+                event_sender.send(Event::new(WifiEvent::Close, trimmed_input));
                 continue;
+                // TODO: Either extract into event or own func.
             } else if trimmed_input.starts_with("full") {
                 // NOTE: SHAPE:
                 // full:addr:topic:msg
@@ -100,7 +119,7 @@ pub fn user_input_task(
                     "SEND OK",
                     read_buffer_cp.clone(),
                     event_sender.clone(),
-                    Event::new(WifiEvent::AckReceived, "".to_owned()),
+                    Event::new(WifiEvent::Close, "".to_owned()),
                 );
                 continue;
             } else {

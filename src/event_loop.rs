@@ -35,6 +35,7 @@ pub enum WifiEvent {
     ConnAck,
     Publish,
     AckReceived,
+    Close,
     Reset,
 }
 

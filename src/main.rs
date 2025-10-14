@@ -26,6 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &event_loop,
         read_buffer.clone(),
         args,
+        initial_state.clone(),
     );
 
     // Register handlers / state transitions

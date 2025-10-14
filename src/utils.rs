@@ -2,8 +2,6 @@ use std::{sync::{mpsc::Sender, Arc, Mutex}, thread, time::Duration};
 
 use crate::event_loop::Event;
 
-
-
 pub fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
     input
         .split_whitespace()

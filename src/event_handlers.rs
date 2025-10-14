@@ -222,11 +222,24 @@ pub fn register_event_handlers(
         }
     });
 
-    let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::AckReceived, move |_e, state| {
         let current_state = state.get();
         if let WifiState::WaitingPublishAck = current_state {
+            if let Ok(mut read_buffer) = read_buffer_cp.lock() {
+                read_buffer.clear();
+            };
+            state.change_to(WifiState::Connected);
+        } else {
+            println!("Invalid state for AckRecieved request: {:?}", current_state);
+        }
+    });
+
+    let mut port_cp = port.try_clone()?;
+    let read_buffer_cp = read_buffer.clone();
+    event_loop.on(WifiEvent::Close, move |_e, state| {
+        let current_state = state.get();
+        if let WifiState::Connected | WifiState::WaitingPublishAck = current_state {
             if let Ok(mut read_buffer) = read_buffer_cp.lock() {
                 read_buffer.clear();
             };
@@ -271,5 +284,6 @@ pub fn register_event_handlers(
         }
 
     });
+
     Ok(())
 }
