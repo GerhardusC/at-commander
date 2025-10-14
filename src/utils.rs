@@ -1,10 +1,6 @@
 use std::{
-    sync::{Arc, Mutex, mpsc::Sender},
-    thread,
-    time::Duration,
+    io::{Error, ErrorKind}, sync::{Arc, Mutex}, thread, time::Duration
 };
-
-use crate::event_loop::Event;
 
 pub fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
     input
@@ -18,9 +14,7 @@ pub fn parse_bytes(input: &str, radix: u8) -> Result<Vec<u8>, String> {
 pub fn wait_for_msg_on_buffer(
     msg: &str,
     read_buffer: Arc<Mutex<String>>,
-    event_sender: Sender<Event>,
-    event: Event,
-) {
+) -> Result<(), Error> {
     let mut timeout = 0;
     if let Ok(mut read_buffer) = read_buffer.lock() {
         read_buffer.clear();
@@ -28,14 +22,11 @@ pub fn wait_for_msg_on_buffer(
     loop {
         if let Ok(read_buffer) = read_buffer.lock() {
             if read_buffer.contains(&msg.to_owned()) {
-                if let Err(e) = event_sender.send(event) {
-                    println!("{e}");
-                };
-                break;
+                return Ok(());
             }
         }
         if timeout > 1000 {
-            break;
+            return Err(Error::new(ErrorKind::TimedOut, "Timeout reading from port"));
         }
         timeout += 1;
         thread::sleep(Duration::from_millis(1));

@@ -46,6 +46,9 @@ pub fn register_event_handlers(
     let mut port_cp = port.try_clone()?;
     let read_buffer_cp = read_buffer.clone();
     event_loop.on(WifiEvent::PublishConnectRequest, move |e| {
+        if let Ok(mut read_buffer) = read_buffer_cp.lock() {
+            read_buffer.clear();
+        };
         // Open TCP Stream
         let msg = format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", e.data);
         match port_cp.write(msg.as_bytes()) {

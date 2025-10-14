@@ -39,24 +39,24 @@ pub fn user_input_task(
                 bytes_vec
             // Send MQTT message
             } else if trimmed_input == "configure" {
-                event_sender.send(Event::new(WifiEvent::Configure, "".to_owned()));
+                let _ = event_sender.send(Event::new(WifiEvent::Configure, "".to_owned()));
                 continue;
             } else if trimmed_input.starts_with("start") {
                 let addr: Vec<String> = trimmed_input.split(":").map(|x| x.to_owned()).collect();
 
-                event_sender.send(Event::new(
+                let _ = event_sender.send(Event::new(
                     WifiEvent::PublishConnectRequest,
                     addr.get(1).unwrap_or(&"243".to_owned()).to_owned(),
                 ));
                 continue;
             } else if trimmed_input == "reset" {
-                event_sender.send(Event::new(WifiEvent::Reset, trimmed_input));
+                let _ = event_sender.send(Event::new(WifiEvent::Reset, trimmed_input));
                 continue;
             } else if trimmed_input.starts_with("con") {
-                event_sender.send(Event::new(WifiEvent::ConnAck, trimmed_input));
+                let _ = event_sender.send(Event::new(WifiEvent::ConnAck, trimmed_input));
                 continue;
             } else if trimmed_input.starts_with("msg") {
-                event_sender.send(Event::new(
+                let _ = event_sender.send(Event::new(
                     WifiEvent::Publish,
                     trimmed_input
                         .split_at_checked(3)
@@ -66,7 +66,7 @@ pub fn user_input_task(
                 ));
                 continue;
             } else if trimmed_input == "close" {
-                event_sender.send(Event::new(WifiEvent::Close, trimmed_input));
+                let _ = event_sender.send(Event::new(WifiEvent::Close, trimmed_input));
                 continue;
                 // TODO: Either extract into event or own func.
             } else if trimmed_input.starts_with("full") {
@@ -81,31 +81,32 @@ pub fn user_input_task(
                 let topic = args.get(2).unwrap_or(&default_topic);
                 let message = args.get(3).unwrap_or(&default_message);
 
-                event_sender.send(Event::new(
+                let _ = event_sender.send(Event::new(
                     WifiEvent::PublishConnectRequest,
                     addr.to_owned(),
                 ));
 
-                wait_for_msg_on_buffer(
-                    "CONNECT",
-                    read_buffer_cp.clone(),
-                    event_sender.clone(),
-                    Event::new(WifiEvent::ConnAck, "".to_owned()),
-                );
+                if let Err(e) = wait_for_msg_on_buffer( "CONNECT", read_buffer_cp.clone()) {
+                    println!("{e}");
+                };
+                let _ = event_sender.send(Event::new(WifiEvent::ConnAck, "".to_owned()));
 
-                wait_for_msg_on_buffer(
-                    "SEND OK",
-                    read_buffer_cp.clone(),
-                    event_sender.clone(),
-                    Event::new(WifiEvent::Publish, format!("msg:{}:{}", topic, message)),
-                );
 
-                wait_for_msg_on_buffer(
-                    "SEND OK",
-                    read_buffer_cp.clone(),
-                    event_sender.clone(),
-                    Event::new(WifiEvent::Close, "".to_owned()),
-                );
+                if let Err(e) = wait_for_msg_on_buffer( "SEND OK", read_buffer_cp.clone()) { 
+                    println!("{e}");
+                };
+
+                let _ = event_sender.send(Event::new(
+                    WifiEvent::Publish,
+                    format!("msg:{}:{}", topic, message),
+                ));
+
+                if let Err(e) = wait_for_msg_on_buffer( "SEND OK", read_buffer_cp.clone()) { 
+                    println!("{e}");
+                };
+
+                let _ = event_sender.send(Event::new(WifiEvent::Close, "".to_owned()));
+
                 continue;
             } else {
                 (trimmed_input.to_owned() + "\r\n").as_bytes().to_vec()
