@@ -1,4 +1,8 @@
-use std::{sync::{mpsc::Sender, Arc, Mutex}, thread, time::Duration};
+use std::{
+    sync::{Arc, Mutex, mpsc::Sender},
+    thread,
+    time::Duration,
+};
 
 use crate::event_loop::Event;
 

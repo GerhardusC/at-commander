@@ -1,4 +1,8 @@
-use std::{error::Error, sync::{Arc, Mutex}, thread::{self, JoinHandle}};
+use std::{
+    error::Error,
+    sync::{Arc, Mutex},
+    thread::{self, JoinHandle},
+};
 
 use serialport::SerialPort;
 

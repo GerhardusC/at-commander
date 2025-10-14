@@ -4,7 +4,10 @@ use std::{
     time::Duration,
 };
 
-use at_commander::{args::Args, event_handlers::register_event_handlers, event_loop::EventLoop, port_input::read_port_buffer_task, user_input::user_input_task};
+use at_commander::{
+    args::Args, event_handlers::register_event_handlers, event_loop::EventLoop,
+    port_input::read_port_buffer_task, user_input::user_input_task,
+};
 use clap::Parser;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -20,12 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // READING TASK
     let tr1 = read_port_buffer_task(&port, read_buffer.clone())?;
 
-    let tr2 = user_input_task(
-        &port,
-        &event_loop,
-        read_buffer.clone(),
-        args,
-    );
+    let tr2 = user_input_task(&port, &event_loop, read_buffer.clone(), args);
 
     // Register handlers / state transitions
     register_event_handlers(&event_loop, read_buffer.clone(), &port)?;

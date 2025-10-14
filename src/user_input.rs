@@ -1,14 +1,18 @@
 use std::{
     error::Error,
-    io::{stdin, ErrorKind},
+    io::{ErrorKind, stdin},
     sync::{Arc, Mutex},
-    thread::{self, JoinHandle}, time::Duration,
+    thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use serialport::SerialPort;
 
-use crate::{args::Args, event_loop::{Event, EventLoop, WifiEvent }, utils::{parse_bytes, wait_for_msg_on_buffer}};
-
+use crate::{
+    args::Args,
+    event_loop::{Event, EventLoop, WifiEvent},
+    utils::{parse_bytes, wait_for_msg_on_buffer},
+};
 
 pub fn user_input_task(
     port: &Box<dyn SerialPort>,
@@ -127,4 +131,3 @@ pub fn user_input_task(
     });
     Ok(jh)
 }
-

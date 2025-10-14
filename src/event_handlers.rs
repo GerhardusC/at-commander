@@ -1,9 +1,13 @@
-use std::{error::Error, sync::{Arc, Mutex}, thread::{self, sleep}, time::Duration};
+use std::{
+    error::Error,
+    sync::{Arc, Mutex},
+    thread::{self, sleep},
+    time::Duration,
+};
 
 use serialport::SerialPort;
 
 use crate::event_loop::{EventLoop, WifiEvent};
-
 
 pub fn register_event_handlers(
     event_loop: &EventLoop,
@@ -27,14 +31,16 @@ pub fn register_event_handlers(
         };
         let _ = port_cp.flush();
 
-        if let Err(e) =  port_cp.write(&[0xE0, 0x00]) {
+        if let Err(e) = port_cp.write(&[0xE0, 0x00]) {
             println!("Failed to write message to wifi device: {e}");
         }
-        if let Err(e) =  port_cp.write("AT+CIPCLOSE\r\n".as_bytes()) {
+        if let Err(e) = port_cp.write("AT+CIPCLOSE\r\n".as_bytes()) {
             println!("Failed to write message to wifi device: {e}");
         }
 
-        println!("State reset to Ready and we tried everything in our power to reset the connection");
+        println!(
+            "State reset to Ready and we tried everything in our power to reset the connection"
+        );
     });
 
     let mut port_cp = port.try_clone()?;
@@ -108,7 +114,6 @@ pub fn register_event_handlers(
                     println!("Failed to write message to wifi device: {e}");
                 }
                 let _ = port_cp.flush();
-
             });
         }
     });
@@ -236,7 +241,6 @@ pub fn register_event_handlers(
                 };
             });
         }
-
     });
 
     Ok(())

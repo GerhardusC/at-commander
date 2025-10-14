@@ -1,4 +1,3 @@
-
 use clap::{Parser, command};
 
 /// Simple program to communicate AT commands with the ESP-01 module.
@@ -20,4 +19,3 @@ pub struct Args {
     #[arg(short, long, default_value_t = 16)]
     pub radix_input_buffer: u8,
 }
-
