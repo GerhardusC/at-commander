@@ -19,18 +19,12 @@ pub enum WifiEvent {
 
 pub struct Event {
     event: WifiEvent,
-    pub data: String,
+    pub data: Option<String>,
 }
 
 impl Event {
-    pub fn new(event: WifiEvent, data: String) -> Self {
+    pub fn new(event: WifiEvent, data: Option<String>) -> Self {
         Event { event, data }
-    }
-}
-
-impl From<Event> for String {
-    fn from(value: Event) -> Self {
-        format!("{:?}: {}", value.event, value.data)
     }
 }
 

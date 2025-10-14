@@ -50,7 +50,9 @@ pub fn register_event_handlers(
             read_buffer.clear();
         };
         // Open TCP Stream
-        let msg = format!("AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", e.data);
+        let msg = format!(
+            "AT+CIPSTART=\"TCP\",\"192.168.0.{}\",1883\r\n", e.data.unwrap_or("243".to_owned())
+        );
         match port_cp.write(msg.as_bytes()) {
             Ok(bytes_written) => {
                 println!("Bytes written: {}", bytes_written);
@@ -128,7 +130,11 @@ pub fn register_event_handlers(
             read_buffer.clear();
         };
         // Tell how many bytes will be sent
-        let args: Vec<String> = e.data.split(":").map(|x| x.to_owned()).collect();
+        let args: Vec<String> = if let Some(e) = e.data {
+            e.split(":").map(|x| x.to_owned()).collect()
+        } else {
+            vec![]
+        };
 
         let topic = match args.get(1) {
             Some(x) => x.to_owned(),
