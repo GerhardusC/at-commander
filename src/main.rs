@@ -1,10 +1,17 @@
+mod args;
+mod event_handlers;
+mod event_loop;
+mod port_input;
+mod user_input;
+mod utils;
+
 use std::{
     error::Error,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use at_commander::{
+use crate::{
     args::Args, event_handlers::register_event_handlers, event_loop::EventLoop,
     port_input::read_port_buffer_task, user_input::user_input_task,
 };
